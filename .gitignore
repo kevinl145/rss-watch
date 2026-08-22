@@ -1,0 +1,4 @@
+/rss-watch
+*.test
+*.out
+.DS_Store
