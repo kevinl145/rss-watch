@@ -43,10 +43,22 @@ const atomSample = `<?xml version="1.0"?>
 </feed>`
 
 const rdfSample = `<?xml version="1.0"?>
-<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-  <channel>
-    <title>Old Style Feed</title>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns="http://purl.org/rss/1.0/"
+         xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel rdf:about="https://example.com/">
+    <title>  Old Style Feed  </title>
+    <link>https://example.com/</link>
   </channel>
+  <item rdf:about="https://example.com/posts/has-about">
+    <title>Has an About</title>
+    <link>https://example.com/posts/has-about</link>
+    <dc:date>2026-08-22T09:00:00Z</dc:date>
+  </item>
+  <item>
+    <title>No About</title>
+    <link>https://example.com/posts/no-about</link>
+  </item>
 </rdf:RDF>`
 
 func TestParseFeedRSS(t *testing.T) {
@@ -104,10 +116,29 @@ func TestParseFeedAtom(t *testing.T) {
 	}
 }
 
-func TestParseFeedRejectsRDF(t *testing.T) {
-	_, err := parseFeed(strings.NewReader(rdfSample))
-	if err == nil {
-		t.Fatal("parseFeed: expected an error for an RDF feed, got nil")
+func TestParseFeedRDF(t *testing.T) {
+	feed, err := parseFeed(strings.NewReader(rdfSample))
+	if err != nil {
+		t.Fatalf("parseFeed: %v", err)
+	}
+	if feed.Title != "Old Style Feed" {
+		t.Errorf("title = %q, want %q", feed.Title, "Old Style Feed")
+	}
+	if len(feed.Items) != 2 {
+		t.Fatalf("got %d items, want 2", len(feed.Items))
+	}
+
+	first := feed.Items[0]
+	if first.ID != "https://example.com/posts/has-about" {
+		t.Errorf("first item ID = %q, want rdf:about", first.ID)
+	}
+	if first.Published != "2026-08-22T09:00:00Z" {
+		t.Errorf("first item Published = %q, want dc:date", first.Published)
+	}
+
+	second := feed.Items[1]
+	if second.ID != "https://example.com/posts/no-about" {
+		t.Errorf("second item ID = %q, want fallback to link", second.ID)
 	}
 }
 

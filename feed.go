@@ -35,6 +35,20 @@ type rssItem struct {
 	PubDate string `xml:"pubDate"`
 }
 
+type rdfDoc struct {
+	Channel struct {
+		Title string `xml:"title"`
+	} `xml:"channel"`
+	Items []rdfItem `xml:"item"`
+}
+
+type rdfItem struct {
+	About string `xml:"about,attr"`
+	Title string `xml:"title"`
+	Link  string `xml:"link"`
+	Date  string `xml:"date"`
+}
+
 type atomDoc struct {
 	Title   string      `xml:"title"`
 	Entries []atomEntry `xml:"entry"`
@@ -110,14 +124,35 @@ func parseFeed(r io.Reader) (*Feed, error) {
 		}
 		return feed, nil
 
+	case "RDF":
+		var doc rdfDoc
+		if err := xml.Unmarshal(data, &doc); err != nil {
+			return nil, fmt.Errorf("decode rdf: %w", err)
+		}
+		feed := &Feed{Title: strings.TrimSpace(doc.Channel.Title)}
+		for _, it := range doc.Items {
+			id := it.About
+			if id == "" {
+				id = it.Link
+			}
+			feed.Items = append(feed.Items, Item{
+				ID:        id,
+				Title:     strings.TrimSpace(it.Title),
+				Link:      strings.TrimSpace(it.Link),
+				Published: strings.TrimSpace(it.Date),
+			})
+		}
+		return feed, nil
+
 	default:
 		return nil, fmt.Errorf("unrecognized feed format (root element %q)", root)
 	}
 }
 
 // rootElementName peeks at the first start element so we know whether to
-// decode as RSS or Atom before committing to a struct shape. RSS 1.0/RDF
-// feeds have a different root ("RDF") and are deliberately left unhandled.
+// decode as RSS, Atom, or RSS 1.0/RDF before committing to a struct shape.
+// RDF feeds put <item> elements as siblings of <channel> rather than
+// nesting them inside it, so they get their own struct shape.
 func rootElementName(data []byte) (string, error) {
 	dec := xml.NewDecoder(strings.NewReader(string(data)))
 	for {

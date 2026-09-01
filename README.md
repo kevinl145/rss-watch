@@ -65,7 +65,7 @@ or the entry for one feed, to make everything look new again.
 
 ## Supported formats
 
-RSS 2.0 and Atom. RSS 1.0 / RDF feeds are not handled yet.
+RSS 2.0, Atom, and RSS 1.0 / RDF.
 
 ## License
 
