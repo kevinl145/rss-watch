@@ -51,9 +51,20 @@ Pass `--json` for machine-readable output, for piping into another script:
       ]
     }
 
+To see which feeds are already tracked, and how many items are recorded as
+seen for each, use `--list`. It reads the state file and exits without
+fetching anything, so it doesn't need a feed URL:
+
+    $ rss-watch --list
+    https://example.com/feed.xml
+      12 item(s) seen, last checked 2026-09-06T08:00:00Z
+
+`--list` also honors `--json`.
+
 ### Flags
 
     --json           output new items as JSON instead of plain text
+    --list           list feeds tracked in the state file and exit
     --quiet          record current items as seen without printing anything
     --state string   path to the state file (default ~/.rss-watch/state.json)
     --timeout        HTTP timeout when fetching the feed (default 15s)
