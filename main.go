@@ -55,25 +55,6 @@ func main() {
 	}
 	feedURL := flag.Arg(0)
 
-	client := &http.Client{Timeout: *timeout}
-	resp, err := client.Get(feedURL)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "fetch %s: %v\n", feedURL, err)
-		os.Exit(1)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintf(os.Stderr, "fetch %s: unexpected status %s\n", feedURL, resp.Status)
-		os.Exit(1)
-	}
-
-	feed, err := parseFeed(resp.Body)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "parse %s: %v\n", feedURL, err)
-		os.Exit(1)
-	}
-
 	st, err := loadState(*statePath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "load state: %v\n", err)
@@ -85,24 +66,64 @@ func main() {
 		fs.Seen = make(map[string]bool)
 	}
 
+	req, err := http.NewRequest(http.MethodGet, feedURL, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fetch %s: %v\n", feedURL, err)
+		os.Exit(1)
+	}
+	if fs.ETag != "" {
+		req.Header.Set("If-None-Match", fs.ETag)
+	}
+	if fs.LastModified != "" {
+		req.Header.Set("If-Modified-Since", fs.LastModified)
+	}
+
+	client := &http.Client{Timeout: *timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fetch %s: %v\n", feedURL, err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+
 	var newItems []Item
-	for _, item := range feed.Items {
-		if !fs.Seen[item.ID] {
-			newItems = append(newItems, item)
+	title := ""
+
+	switch resp.StatusCode {
+	case http.StatusNotModified:
+		// Server confirmed nothing changed; nothing new to report, and
+		// the seen set doesn't need touching.
+	case http.StatusOK:
+		feed, err := parseFeed(resp.Body)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "parse %s: %v\n", feedURL, err)
+			os.Exit(1)
 		}
+		title = feed.Title
+
+		for _, item := range feed.Items {
+			if !fs.Seen[item.ID] {
+				newItems = append(newItems, item)
+			}
+		}
+		for _, item := range feed.Items {
+			fs.Seen[item.ID] = true
+		}
+		fs.ETag = resp.Header.Get("ETag")
+		fs.LastModified = resp.Header.Get("Last-Modified")
+	default:
+		fmt.Fprintf(os.Stderr, "fetch %s: unexpected status %s\n", feedURL, resp.Status)
+		os.Exit(1)
 	}
 
 	if !*quiet {
 		if *jsonOut {
-			printJSON(feedURL, feed.Title, newItems)
+			printJSON(feedURL, title, newItems)
 		} else {
-			printText(feed.Title, newItems)
+			printText(title, newItems)
 		}
 	}
 
-	for _, item := range feed.Items {
-		fs.Seen[item.ID] = true
-	}
 	fs.LastChecked = time.Now()
 	st.Feeds[feedURL] = fs
 

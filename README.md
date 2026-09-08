@@ -74,6 +74,11 @@ fetching anything, so it doesn't need a feed URL:
 Seen items are tracked per feed URL in a single JSON file. Delete the file,
 or the entry for one feed, to make everything look new again.
 
+Each feed entry also remembers the `ETag` and `Last-Modified` values from
+the last response, if the server sent them, and uses them on the next run
+as `If-None-Match` / `If-Modified-Since`. A server that replies `304 Not
+Modified` means the feed body isn't re-fetched or re-parsed at all.
+
 ## Supported formats
 
 RSS 2.0, Atom, and RSS 1.0 / RDF.

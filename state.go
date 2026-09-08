@@ -14,8 +14,10 @@ type State struct {
 }
 
 type FeedState struct {
-	Seen        map[string]bool `json:"seen"`
-	LastChecked time.Time       `json:"last_checked"`
+	Seen         map[string]bool `json:"seen"`
+	LastChecked  time.Time       `json:"last_checked"`
+	ETag         string          `json:"etag,omitempty"`
+	LastModified string          `json:"last_modified,omitempty"`
 }
 
 func loadState(path string) (*State, error) {
