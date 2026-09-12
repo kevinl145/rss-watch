@@ -29,8 +29,9 @@ func main() {
 	timeout := flag.Duration("timeout", 15*time.Second, "HTTP timeout when fetching the feed")
 	quiet := flag.Bool("quiet", false, "record current items as seen without printing anything (use on first run)")
 	list := flag.Bool("list", false, "list feeds tracked in the state file and exit")
+	configPath := flag.String("config", "", "path to a file listing feed URLs to watch, one per line, instead of a single feed argument")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: %s [flags] <feed-url>\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s [flags] <feed-url>\n       %s [flags] --config <path>\n\n", os.Args[0], os.Args[0])
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -49,11 +50,29 @@ func main() {
 		return
 	}
 
-	if flag.NArg() != 1 {
-		flag.Usage()
-		os.Exit(2)
+	var feedURLs []string
+	if *configPath != "" {
+		if flag.NArg() != 0 {
+			fmt.Fprintln(os.Stderr, "cannot use --config together with a feed URL argument")
+			os.Exit(2)
+		}
+		urls, err := readConfig(*configPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "read config: %v\n", err)
+			os.Exit(1)
+		}
+		if len(urls) == 0 {
+			fmt.Fprintf(os.Stderr, "%s: no feed URLs found\n", *configPath)
+			os.Exit(1)
+		}
+		feedURLs = urls
+	} else {
+		if flag.NArg() != 1 {
+			flag.Usage()
+			os.Exit(2)
+		}
+		feedURLs = []string{flag.Arg(0)}
 	}
-	feedURL := flag.Arg(0)
 
 	st, err := loadState(*statePath)
 	if err != nil {
@@ -61,6 +80,39 @@ func main() {
 		os.Exit(1)
 	}
 
+	client := &http.Client{Timeout: *timeout}
+	showFeed := len(feedURLs) > 1
+	exitCode := 0
+
+	for _, feedURL := range feedURLs {
+		title, newItems, err := fetchAndDiff(client, st, feedURL)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", feedURL, err)
+			exitCode = 1
+			continue
+		}
+		if !*quiet {
+			if *jsonOut {
+				printJSON(feedURL, title, newItems)
+			} else {
+				printText(feedURL, title, newItems, showFeed)
+			}
+		}
+	}
+
+	if err := saveState(*statePath, st); err != nil {
+		fmt.Fprintf(os.Stderr, "save state: %v\n", err)
+		os.Exit(1)
+	}
+
+	os.Exit(exitCode)
+}
+
+// fetchAndDiff fetches a single feed, works out which items haven't been
+// seen before, and updates st in place with the new seen set, ETag,
+// Last-Modified, and last-checked time. State is only updated on success,
+// so a feed that fails to fetch or parse is left untouched for the next run.
+func fetchAndDiff(client *http.Client, st *State, feedURL string) (title string, newItems []Item, err error) {
 	fs := st.Feeds[feedURL]
 	if fs.Seen == nil {
 		fs.Seen = make(map[string]bool)
@@ -68,8 +120,7 @@ func main() {
 
 	req, err := http.NewRequest(http.MethodGet, feedURL, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "fetch %s: %v\n", feedURL, err)
-		os.Exit(1)
+		return "", nil, fmt.Errorf("fetch: %w", err)
 	}
 	if fs.ETag != "" {
 		req.Header.Set("If-None-Match", fs.ETag)
@@ -78,16 +129,11 @@ func main() {
 		req.Header.Set("If-Modified-Since", fs.LastModified)
 	}
 
-	client := &http.Client{Timeout: *timeout}
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "fetch %s: %v\n", feedURL, err)
-		os.Exit(1)
+		return "", nil, fmt.Errorf("fetch: %w", err)
 	}
 	defer resp.Body.Close()
-
-	var newItems []Item
-	title := ""
 
 	switch resp.StatusCode {
 	case http.StatusNotModified:
@@ -96,8 +142,7 @@ func main() {
 	case http.StatusOK:
 		feed, err := parseFeed(resp.Body)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "parse %s: %v\n", feedURL, err)
-			os.Exit(1)
+			return "", nil, fmt.Errorf("parse: %w", err)
 		}
 		title = feed.Title
 
@@ -112,25 +157,12 @@ func main() {
 		fs.ETag = resp.Header.Get("ETag")
 		fs.LastModified = resp.Header.Get("Last-Modified")
 	default:
-		fmt.Fprintf(os.Stderr, "fetch %s: unexpected status %s\n", feedURL, resp.Status)
-		os.Exit(1)
-	}
-
-	if !*quiet {
-		if *jsonOut {
-			printJSON(feedURL, title, newItems)
-		} else {
-			printText(title, newItems)
-		}
+		return "", nil, fmt.Errorf("unexpected status %s", resp.Status)
 	}
 
 	fs.LastChecked = time.Now()
 	st.Feeds[feedURL] = fs
-
-	if err := saveState(*statePath, st); err != nil {
-		fmt.Fprintf(os.Stderr, "save state: %v\n", err)
-		os.Exit(1)
-	}
+	return title, newItems, nil
 }
 
 func defaultStatePath() string {
@@ -141,7 +173,10 @@ func defaultStatePath() string {
 	return filepath.Join(home, ".rss-watch", "state.json")
 }
 
-func printText(feedTitle string, items []Item) {
+func printText(feedURL, feedTitle string, items []Item, showFeed bool) {
+	if showFeed {
+		fmt.Printf("%s:\n", feedURL)
+	}
 	if len(items) == 0 {
 		fmt.Println("no new items")
 		return
